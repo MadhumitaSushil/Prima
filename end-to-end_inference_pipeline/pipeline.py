@@ -53,11 +53,10 @@ from Prima_training_and_evaluation.patchify import MedicalImagePatchifier
 @dataclass
 class PipelineConfig:
     """Configuration for the pipeline."""
-    study_dir: str
+    data_dir: str
     output_dir: str
     tokenizer_model_config: str
     prima_model_config: str
-    study_description: str
     batch_size: int = 1
     num_workers: int = 2
     max_tokens_per_chunk: int = 400
@@ -66,7 +65,7 @@ class PipelineConfig:
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'PipelineConfig':
         """Create a PipelineConfig from a dictionary."""
-        required_keys = ['study_dir', 'output_dir', 'tokenizer_model_config', 'prima_model_config', 'study_description']
+        required_keys = ['data_dir', 'output_dir', 'tokenizer_model_config', 'prima_model_config']
         missing_keys = [key for key in required_keys if key not in config_dict]
         if missing_keys:
             raise ValueError(f"Missing required config keys: {missing_keys}")
@@ -90,8 +89,8 @@ class Pipeline:
         self.logger.info(f'Initializing pipeline with config: {self.config}')
         
         # Initialize models as None
-        self.tokenizer_model = None
-        self.prima_model = None
+        self.tokenizer_model = self.load_tokenizer_model()
+        self.prima_model = self.load_full_prima_model()
         self.patchifier = MedicalImagePatchifier(in_dim = 256)
 
     def _setup_logging(self) -> None:
@@ -120,7 +119,7 @@ class Pipeline:
             torch.cuda.empty_cache()
         gc.collect()
 
-    def load_mri_study(self) -> Tuple[List[sitk.Image], List[str]]:
+    def load_mri_study(self, study_dir) -> Tuple[List[sitk.Image], List[str]]:
         """
         Load the MRI study from the study directory.
         
@@ -129,56 +128,54 @@ class Pipeline:
         """
         self.logger.info('Loading MRI study')
         try:
-            self.mri_study, self.series_list = DicomUtils.load_mri_study(self.config.study_dir)
+            self.mri_study, self.series_list, self.study_description = DicomUtils.load_mri_study(study_dir)
             self.logger.info(f'Successfully loaded {len(self.mri_study)} series')
-            return self.mri_study, self.series_list
+            return self.mri_study, self.series_list, self.study_description
         except Exception as e:
             self.logger.error(f'Failed to load MRI study: {str(e)}')
             raise
     
     def load_tokenizer_model(self) -> torch.nn.Module:
         """Load the tokenizer model."""
-        if self.tokenizer_model is None:
-            self.logger.info('Loading tokenizer model')
-            try:
-                # Handle path or dict; support JSON or YAML
-                if isinstance(self.config.tokenizer_model_config, str):
-                    p = Path(self.config.tokenizer_model_config)
-                    with open(p, 'r') as f:
-                        tokenizer_config = yaml.safe_load(f) if p.suffix in ('.yaml', '.yml') else json.load(f)
-                else:
-                    tokenizer_config = self.config.tokenizer_model_config
-                self.tokenizer_model = ModelLoader.load_vqvae_model(tokenizer_config)
-                self.tokenizer_model = self.tokenizer_model.to(self.config.device)
-                self.tokenizer_model.eval()
-            except Exception as e:
-                self.logger.error(f'Failed to load tokenizer model: {str(e)}')
-                raise
+        self.logger.info('Loading tokenizer model')
+        try:
+            # Handle path or dict; support JSON or YAML
+            if isinstance(self.config.tokenizer_model_config, str):
+                p = Path(self.config.tokenizer_model_config)
+                with open(p, 'r') as f:
+                    tokenizer_config = yaml.safe_load(f) if p.suffix in ('.yaml', '.yml') else json.load(f)
+            else:
+                tokenizer_config = self.config.tokenizer_model_config
+            self.tokenizer_model = ModelLoader.load_vqvae_model(tokenizer_config)
+            self.tokenizer_model = self.tokenizer_model.to(self.config.device)
+            self.tokenizer_model.eval()
+        except Exception as e:
+            self.logger.error(f'Failed to load tokenizer model: {str(e)}')
+            raise
         return self.tokenizer_model
     
     def load_full_prima_model(self) -> torch.nn.Module:
         """Load the full Prima model (FullMRIModel). Config path or dict; supports JSON/YAML."""
-        if self.prima_model is None:
-            self.logger.info('Loading Prima model')
-            try:
-                if isinstance(self.config.prima_model_config, str):
-                    config_path = Path(self.config.prima_model_config)
-                    with open(config_path, 'r') as f:
-                        prima_config = yaml.safe_load(f) if config_path.suffix in ('.yaml', '.yml') else json.load(f)
-                    # Resolve relative paths in config (e.g. full_model_ckpt) relative to config file dir
-                    config_dir = config_path.resolve().parent
-                    if "full_model_ckpt" in prima_config:
-                        p = Path(prima_config["full_model_ckpt"])
-                        if not p.is_absolute():
-                            prima_config = {**prima_config, "full_model_ckpt": str(config_dir / p)}
-                else:
-                    prima_config = self.config.prima_model_config
-                self.prima_model = ModelLoader.load_full_prima_model(prima_config)
-                self.prima_model = self.prima_model.to(self.config.device)
-                self.prima_model.eval()
-            except Exception as e:
-                self.logger.error(f'Failed to load Prima model: {str(e)}')
-                raise
+        self.logger.info('Loading Prima model')
+        try:
+            if isinstance(self.config.prima_model_config, str):
+                config_path = Path(self.config.prima_model_config)
+                with open(config_path, 'r') as f:
+                    prima_config = yaml.safe_load(f) if config_path.suffix in ('.yaml', '.yml') else json.load(f)
+                # Resolve relative paths in config (e.g. full_model_ckpt) relative to config file dir
+                config_dir = config_path.resolve().parent
+                if "full_model_ckpt" in prima_config:
+                    p = Path(prima_config["full_model_ckpt"])
+                    if not p.is_absolute():
+                        prima_config = {**prima_config, "full_model_ckpt": str(config_dir / p)}
+            else:
+                prima_config = self.config.prima_model_config
+            self.prima_model = ModelLoader.load_full_prima_model(prima_config)
+            self.prima_model = self.prima_model.to(self.config.device)
+            self.prima_model.eval()
+        except Exception as e:
+            self.logger.error(f'Failed to load Prima model: {str(e)}')
+            raise
         return self.prima_model
     
     def create_dataset(self, mri_study: List[sitk.Image]) -> DataLoader:
@@ -208,8 +205,9 @@ class Pipeline:
 
     def prepare_prima_input(
         self,
-        series_embeddings: Optional[List[torch.Tensor]] = None,
-        series_names: Optional[List[str]] = None,
+        study_description,
+        series_embeddings: List[torch.Tensor],
+        series_names: List[str],
         all_ser_emb_meta: Optional[List[Dict[str, Any]]] = None,
         otsu_percentage = 5,
     ) -> Dict[str, Any]:
@@ -217,18 +215,14 @@ class Pipeline:
         Prepare the input for the Prima model.
         
         Args:
-            series_embeddings: If provided, use these instead of re-running the tokenizer.
-            series_names: If provided, use these (must be with series_embeddings).
+            study_description: Study description in str.
+            series_embeddings: Series embeddings after tokenization.
+            series_names: Must be with series_embeddings.
         
         Returns:
             Dictionary containing model inputs
         """
         try:
-            if series_embeddings is None or series_names is None:
-                mri_study, series_names = self.load_mri_study()
-                series_embeddings, series_names = self.run_tokenizer_model(mri_study, series_names=series_names)
-                if series_names is None:
-                    series_names = [f"series_{i}" for i in range(len(series_embeddings))]
             assert series_embeddings is not None and series_names is not None and len(series_embeddings) == len(series_names)
 
             coords = None
@@ -278,7 +272,7 @@ class Pipeline:
             serienames = serienames_tensor.unsqueeze(0)
             
             # Create study description tensor
-            study_desc = chartovec(self.config.study_description).unsqueeze(0)
+            study_desc = chartovec(study_description).unsqueeze(0)
             
         
             return {
@@ -310,7 +304,8 @@ class Pipeline:
             (series_embeddings, series_names_for_embeddings). If series_names was not provided, second is None.
         """
         self.logger.info('Running tokenizer model')
-        vqvae = self.load_tokenizer_model()
+        self.tokenizer_model.to(self.config.device)
+        self.tokenizer_model.eval()
         dataloader = self.create_dataset(mri_study)
         series_embeddings = []
         filtered_names = [] if series_names is not None else None
@@ -318,6 +313,7 @@ class Pipeline:
         try:
             with torch.no_grad():
                 for idx, batch in enumerate(tqdm(dataloader, desc="Processing series")):
+                    self.logger.info('Processing series: ' + str(idx))
                     series_name = (series_names[idx] if series_names is not None else f"series_{idx}")
                     try:
                         batch, ser_emb_meta = batch
@@ -327,7 +323,7 @@ class Pipeline:
                         tokens = batch[0]
                         num_tokens = tokens.shape[0]
                         if num_tokens > 5000:
-                            raise Exception("Too many tokens for "+series_name)
+                            raise Exception("Too many tokens: " + str(num_tokens) + " for "+series_name)
 
                         # VQ-VAE encoder expects (B, C, D, H, W) with C=1; tokens are (N, D, H, W)
                         num_chunks = (num_tokens + self.config.max_tokens_per_chunk - 1) // self.config.max_tokens_per_chunk
@@ -339,7 +335,7 @@ class Pipeline:
                             token_list.append(chunk)
 
                         embeddings = [
-                            vqvae.encode(chunk.to(self.config.device)).detach().cpu()
+                            self.tokenizer_model.encode(chunk.to(self.config.device)).detach().cpu()
                             for chunk in token_list
                         ]
                         series_embedding = torch.cat(embeddings, dim=0)
@@ -361,12 +357,14 @@ class Pipeline:
             )
             return series_embeddings, (filtered_names if series_names is not None else None), all_ser_emb_meta
         finally:
-            self.tokenizer_model = None
+            self.tokenizer_model.to('cpu') # Free up CUDA memory by moving to CPU instead of deleting the object
             torch.cuda.empty_cache()
             gc.collect()
 
     def run_prima_model(
         self,
+        study_id: str,
+        study_description: str,
         series_embeddings: Optional[List[torch.Tensor]] = None,
         series_names: Optional[List[str]] = None,
         all_ser_emb_meta: Optional[List[Dict[str, Any]]] = None,
@@ -375,6 +373,8 @@ class Pipeline:
         Run the Prima model to get final predictions.
         
         Args:
+            study_id: Accession of the study for storing the results.
+            study_description: Study description in str
             series_embeddings: If provided, reuse these (avoids re-running tokenizer; saves memory).
             series_names: If provided with series_embeddings, reuse these.
         
@@ -396,15 +396,14 @@ class Pipeline:
 
         try:
             # Free tokenizer and reclaim GPU memory before loading Prima (single-GPU friendly, e.g. L40S)
-            if self.tokenizer_model is not None:
-                del self.tokenizer_model
-                self.tokenizer_model = None
+            self.tokenizer_model.to('cpu')
             if 'cuda' in str(self.config.device):
                 torch.cuda.empty_cache()
             gc.collect()
 
             # Prepare input for Prima model (reuse embeddings if provided)
             prima_input = self.prepare_prima_input(
+                study_description=study_description,
                 series_embeddings=series_embeddings,
                 series_names=series_names,
                 all_ser_emb_meta=all_ser_emb_meta,
@@ -446,7 +445,6 @@ class Pipeline:
             predictions_serializable = tensor_to_serializable(predictions)
 
             # Save predictions with study_id prefix (study_id = last component of study_dir)
-            study_id = Path(self.config.study_dir).name or "study"
             output_path = (self.output_dir / f"{study_id}_predictions.json").resolve()
             with open(output_path, 'w') as f:
                 json.dump(predictions_serializable, f, indent=2)
@@ -484,26 +482,37 @@ if __name__=="__main__":
         pipeline.logger.info("Starting pipeline execution")
         
         # Step 1: Load MRI study
-        mri_study, series_names = pipeline.load_mri_study()
-        pipeline.logger.info(f"Loaded {len(mri_study)} series from study")
-        
-        # Step 2: Run tokenizer model (pass series_names so failed series are skipped and names stay in sync)
-        series_embeddings, series_names_for_embeddings, all_ser_emb_meta = pipeline.run_tokenizer_model(
-            mri_study, series_names=series_names
-        )
-        if series_names_for_embeddings is not None:
-            series_names = series_names_for_embeddings
-        if not series_embeddings:
-            raise RuntimeError("No series could be tokenized; pipeline cannot continue. Check logs for skipped series.")
-        pipeline.logger.info(f"Generated embeddings for {len(series_embeddings)} series")
-        
-        # Step 3: Run Prima model (pass embeddings to avoid re-running tokenizer; saves GPU memory)
-        predictions = pipeline.run_prima_model(
-            series_embeddings=series_embeddings,
-            series_names=series_names,
-            all_ser_emb_meta=all_ser_emb_meta,
-        )
-        pipeline.logger.info("Pipeline execution completed successfully")
+        # Base accession directory has a subfolder which contains the study
+        for acc_dir in Path(pipeline.config.data_dir).iterdir():
+            if not acc_dir.is_dir():
+                continue
+            acc_path = os.path.join(pipeline.config.data_dir, acc_dir.name)
+            study_dir = [Path(os.path.join(acc_path, item.name))
+                         for item in Path(acc_path).iterdir() if item.is_dir()
+                         ][0] # Selecting 0th index assuming there would be only one study dir
+            pipeline.logger.info(f"Processing {study_dir}")
+            mri_study, series_names, study_description = pipeline.load_mri_study(study_dir)
+            pipeline.logger.info(f"Loaded {len(mri_study)} series from study")
+
+            # Step 2: Run tokenizer model (pass series_names so failed series are skipped and names stay in sync)
+            series_embeddings, series_names_for_embeddings, all_ser_emb_meta = pipeline.run_tokenizer_model(
+                mri_study, series_names=series_names
+            )
+            if series_names_for_embeddings is not None:
+                series_names = series_names_for_embeddings
+            if not series_embeddings:
+                raise RuntimeError("No series could be tokenized; pipeline cannot continue. Check logs for skipped series.")
+            pipeline.logger.info(f"Generated embeddings for {len(series_embeddings)} series")
+
+            # Step 3: Run Prima model (pass embeddings to avoid re-running tokenizer; saves GPU memory)
+            predictions = pipeline.run_prima_model(
+                study_id=acc_dir.name,
+                study_description=study_description,
+                series_embeddings=series_embeddings,
+                series_names=series_names,
+                all_ser_emb_meta=all_ser_emb_meta,
+            )
+            pipeline.logger.info("Pipeline execution completed successfully")
         
     except Exception as e:
         logging.error(f"Pipeline execution failed: {str(e)}")

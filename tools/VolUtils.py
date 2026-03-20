@@ -95,6 +95,7 @@ def adjusted_patch_shape(
 
         z_idx = None
 
+        logging.info("Image shape: {}".format(image_shape))
         for idx, dim_size in enumerate(image_shape):
             if dim_size != 256:
                 z_idx = idx

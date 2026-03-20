@@ -155,6 +155,9 @@ class DicomUtils:
                 reader = sitk.ImageFileReader()
                 reader.SetFileName(file_path)
                 reader.ReadImageInformation()
+
+                study_description = reader.GetMetaData("0008|1030")
+
                 size = reader.GetSize()
                 if size not in size_to_paths:
                     size_to_paths[size] = []
@@ -191,10 +194,17 @@ class DicomUtils:
             dicom_names = reader.GetGDCMSeriesFileNames(directory)
             dicom_names = natsort.natsorted(DicomUtils.filter_dicom_series(dicom_names))
             reader.SetFileNames(dicom_names)
+
+            # to load metadata like study description
+            reader.MetaDataDictionaryArrayUpdateOn()
+
             logging.info('*' * 10)
             
             # Execute dicom reader
             image = reader.Execute()
+
+            study_description = reader.GetMetaData(0, "0008|1030")
+
             info_dict = {}
             original_dict = DicomUtils.print_sitk_info(image, "Original", return_dict=True)
             info_dict.update(original_dict)
@@ -239,7 +249,7 @@ class DicomUtils:
                 logging.info(f"Image saved to {save_path}")
                 logging.info('*' * 10)
                 
-            return image, dicom_names, info_dict
+            return image, dicom_names, study_description, info_dict
             
         except Exception as e:
             raise RuntimeError(f"Failed to read DICOM series: {str(e)}")
@@ -256,7 +266,7 @@ class DicomUtils:
             Tuple of (list of series images, list of series names extracted from DICOM metadata)
         """
         try:
-            logging.info('Loading MRI studies')
+            logging.info('Loading MRI series')
             series_list = natsort.natsorted(os.listdir(study_dir))
             mri_study = []
             valid_series_list = []
@@ -269,7 +279,7 @@ class DicomUtils:
                     continue
                     
                 try:
-                    series_image, dicom_files, _ = DicomUtils.read_dicom_series(series_path)
+                    series_image, dicom_files, study_desc, _ = DicomUtils.read_dicom_series(series_path)
                     
                     # Extract series name from first DICOM file
                     series_name = None
@@ -289,8 +299,9 @@ class DicomUtils:
                 
             if len(mri_study) == 0:
                 raise RuntimeError(f"No valid series found in {study_dir}")
-                
-            return mri_study, valid_series_list
+
+            # Assuming all study descriptions are the same, so returning the final one is ok, no need to return a list.
+            return mri_study, valid_series_list, study_desc
             
         except Exception as e:
             raise RuntimeError(f"Failed to load MRI study: {str(e)}")
