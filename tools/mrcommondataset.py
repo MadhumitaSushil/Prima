@@ -13,8 +13,9 @@ except ImportError:
 
 class MrVoxelDataset(Dataset):
 
-    def __init__(self, series_volumes, transform=None):
+    def __init__(self, series_volumes, z_indices, transform=None):
         self.series_volumes = series_volumes
+        self.z_indices = z_indices
         self.transform = transform
 
     def __len__(self):
@@ -22,12 +23,12 @@ class MrVoxelDataset(Dataset):
 
     def __getitem__(self, idx):
         volume = self.series_volumes[idx]
+        z_idx = self.z_indices[idx]
         # tokenize_volume expects numpy/torch with .shape; convert SimpleITK Image if needed
         if sitk is not None and hasattr(volume, "GetSize"):
             volume = np.asarray(sitk.GetArrayFromImage(volume), dtype=np.float64)
         
-        tokens, coords, otsu, pad_shape, patch_shape, z_idx = tokenize_volume(volume,
-                                                              mask_perc=50)
+        tokens, coords, otsu, pad_shape, patch_shape = tokenize_volume(volume, z_idx, mask_perc=50)
 
         otsu_thresholds = generate_otsu_thresholds(coords, otsu, pad_shape, patch_shape)
 

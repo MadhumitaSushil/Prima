@@ -13,8 +13,9 @@ from tools.VolUtils import tokenize_volume, \
 
 class VolumeDataset(Dataset):
 
-    def __init__(self, data, transform=None):
+    def __init__(self, data, z_indices, transform=None):
         self.data = data
+        self.z_indices = z_indices
         self.transform = transform
 
     def __len__(self):
@@ -24,8 +25,9 @@ class VolumeDataset(Dataset):
         volume_path = self.data.iloc[idx]['series_path']
         volume = load_series_sitk(volume_path)
 
-        tokens, _, _, _, patch_shape, z_idx = tokenize_volume(volume,
-                                                              mask_perc=50)
+        z_idx = self.z_indices[idx]
+
+        tokens, _, _, _, patch_shape = tokenize_volume(volume, z_idx, mask_perc=50)
 
         if not tokens:
             # print(f"No tokens found for {volume_path}")

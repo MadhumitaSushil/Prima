@@ -128,9 +128,9 @@ class Pipeline:
         """
         self.logger.info('Loading MRI study')
         try:
-            self.mri_study, self.series_list, self.study_description = DicomUtils.load_mri_study(study_dir)
+            self.mri_study, self.series_list, self.z_idx_list, self.study_description = DicomUtils.load_mri_study(study_dir)
             self.logger.info(f'Successfully loaded {len(self.mri_study)} series')
-            return self.mri_study, self.series_list, self.study_description
+            return self.mri_study, self.series_list, self.z_idx_list, self.study_description
         except Exception as e:
             self.logger.error(f'Failed to load MRI study: {str(e)}')
             raise
@@ -178,18 +178,22 @@ class Pipeline:
             raise
         return self.prima_model
     
-    def create_dataset(self, mri_study: List[sitk.Image]) -> DataLoader:
+    def create_dataset(self,
+                       mri_study: List[sitk.Image],
+                       z_indices: List[int]
+                       ) -> DataLoader:
         """
         Create a dataset from the MRI study.
         
         Args:
             mri_study: List of MRI images
+            z_indices: List of z-indexes for each MRI series
             
         Returns:
             DataLoader for the dataset
         """
         try:
-            dataset = MrVoxelDataset(mri_study)
+            dataset = MrVoxelDataset(mri_study, z_indices)
             # Use num_workers=0 on GPU to avoid extra process memory and CUDA context issues
             num_workers = 0 if 'cuda' in str(self.config.device) else self.config.num_workers
             dataloader = DataLoader(
@@ -290,6 +294,7 @@ class Pipeline:
     def run_tokenizer_model(
         self,
         mri_study: List[sitk.Image],
+        z_indices: List[int],
         series_names: Optional[List[str]] = None,
     ) -> Tuple[List[torch.Tensor], List[str]]:
         """
@@ -298,6 +303,7 @@ class Pipeline:
 
         Args:
             mri_study: List of MRI images
+            z_indices: List of z-indexes for each MRI series
             series_names: Optional list of series names; if provided, returned names match embeddings (failed series omitted).
 
         Returns:
@@ -306,7 +312,7 @@ class Pipeline:
         self.logger.info('Running tokenizer model')
         self.tokenizer_model.to(self.config.device)
         self.tokenizer_model.eval()
-        dataloader = self.create_dataset(mri_study)
+        dataloader = self.create_dataset(mri_study, z_indices)
         series_embeddings = []
         filtered_names = [] if series_names is not None else None
         all_ser_emb_meta = []
@@ -491,12 +497,12 @@ if __name__=="__main__":
                          for item in Path(acc_path).iterdir() if item.is_dir()
                          ][0] # Selecting 0th index assuming there would be only one study dir
             pipeline.logger.info(f"Processing {study_dir}")
-            mri_study, series_names, study_description = pipeline.load_mri_study(study_dir)
+            mri_study, series_names, z_indices, study_description = pipeline.load_mri_study(study_dir)
             pipeline.logger.info(f"Loaded {len(mri_study)} series from study")
 
             # Step 2: Run tokenizer model (pass series_names so failed series are skipped and names stay in sync)
             series_embeddings, series_names_for_embeddings, all_ser_emb_meta = pipeline.run_tokenizer_model(
-                mri_study, series_names=series_names
+                mri_study, z_indices, series_names=series_names
             )
             if series_names_for_embeddings is not None:
                 series_names = series_names_for_embeddings

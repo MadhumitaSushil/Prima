@@ -74,7 +74,7 @@ def percentile_mask(image: Union[np.ndarray, torch.Tensor], mask_threshold: int 
 
 
 def adjusted_patch_shape(
-    image_shape: Tuple[int, int, int],
+    z_idx: int,
     patch_shape: Optional[List[int]] = None,
     z_val: int = 4,
 ) -> Tuple[List[int], Optional[int]]:
@@ -82,7 +82,6 @@ def adjusted_patch_shape(
     Adjust the patch shape based on the image shape.
     
     Args:
-        image_shape: Shape of the input image
         patch_shape: Optional initial patch shape
         z_val: Value to use for z dimension
         
@@ -93,16 +92,9 @@ def adjusted_patch_shape(
         if patch_shape is None:
             patch_shape = DEFAULT_PATCH_SHAPE.copy()
 
-        z_idx = None
+        patch_shape[z_idx] = z_val
 
-        logging.info("Image shape: {}".format(image_shape))
-        for idx, dim_size in enumerate(image_shape):
-            if dim_size != 256:
-                z_idx = idx
-                patch_shape[z_idx] = z_val
-                break
-
-        return patch_shape, z_idx
+        return patch_shape
     except Exception as e:
         raise RuntimeError(f"Failed to adjust patch shape: {str(e)}")
 
@@ -155,6 +147,7 @@ def scale(x: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]
 
 def tokenize_volume(
     volume: Union[np.ndarray, torch.Tensor],
+    z_idx: int,
     mask_perc: int = 50
 ) -> Tuple[List[torch.Tensor], List[Tuple[int, int, int]], List[float], Tuple[int, int, int], List[int], Optional[int]]:
     """
@@ -162,6 +155,7 @@ def tokenize_volume(
     
     Args:
         volume: Input volume as numpy array or torch tensor
+        z_idx: Index of z dimension
         mask_perc: Percentage threshold for masking
         
     Returns:
@@ -171,12 +165,11 @@ def tokenize_volume(
         - List of patch values
         - Volume shape
         - Patch shape
-        - Z dimension index
     """
     try:
         start = time.time()
         img = volume
-        patch_size, z_idx = adjusted_patch_shape(img.shape)
+        patch_size = adjusted_patch_shape(z_idx)
         logging.info(f"Patch shape is {patch_size}")
         
         padded_volume = pad_volume_for_patches(img, patch_size)
@@ -209,7 +202,7 @@ def tokenize_volume(
         elapsed_time = time.time() - start
         logging.info(f"Finished chopping volume into patches in {elapsed_time:.2f} seconds")
 
-        return patches, coordinates, values_, padded_volume.shape, patch_size, z_idx
+        return patches, coordinates, values_, padded_volume.shape, patch_size
     except Exception as e:
         raise RuntimeError(f"Failed to tokenize volume: {str(e)}")
 

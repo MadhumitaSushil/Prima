@@ -209,6 +209,8 @@ class DicomUtils:
             original_dict = DicomUtils.print_sitk_info(image, "Original", return_dict=True)
             info_dict.update(original_dict)
 
+            original_orientation = info_dict['OriginalOrientation']
+
             # Resize the image if new_size is specified
             if new_size[0] is not None and new_size[1] is not None:
                 original_size = image.GetSize()
@@ -241,7 +243,10 @@ class DicomUtils:
                 # Print info after orientation (if applied)
                 logging.info('=' * 10)
                 new_dict = DicomUtils.print_sitk_info(image, type_="Reorient", return_dict=True)
-                info_dict.update(new_dict) 
+                info_dict.update(new_dict)
+
+            z_idx = DicomUtils.get_z_idx(original_orientation, new_orientation)
+            logging.info('Identified z_idx as {}'.format(z_idx))
 
             # Optionally save the image
             if save_path is not None:
@@ -249,10 +254,37 @@ class DicomUtils:
                 logging.info(f"Image saved to {save_path}")
                 logging.info('*' * 10)
                 
-            return image, dicom_names, study_description, info_dict
+            return image, dicom_names, study_description, info_dict, z_idx
             
         except Exception as e:
             raise RuntimeError(f"Failed to read DICOM series: {str(e)}")
+
+    @staticmethod
+    def get_z_idx(original_orientation: str, new_orientation: str) -> int:
+        """
+        Finds slicing index in the new_orientation that matches that of original_orientation.
+        """
+        if new_orientation is None:
+            return 2  # without reorientation, the slice index is always the last index
+
+        # Define the three anatomical axis families
+        families = {
+            'L': 'LR',
+            'R': 'LR',
+            'P': 'PA',
+            'A': 'PA',
+            'S': 'SI',
+            'I': 'SI'
+        }
+
+        # 1. Identify the anatomical family of the original slicing axis (3rd letter)
+        original_slice_letter = original_orientation[-1]
+        slice_family = families[original_slice_letter]
+
+        # 2. Find which index in the target orientation belongs to that same family
+        for final_index, target_letter in enumerate(new_orientation):
+            if families[target_letter] == slice_family:
+                return final_index
 
     @staticmethod
     def load_mri_study(study_dir: str) -> Tuple[List[sitk.Image], List[str]]:
@@ -270,6 +302,7 @@ class DicomUtils:
             series_list = natsort.natsorted(os.listdir(study_dir))
             mri_study = []
             valid_series_list = []
+            z_idx_list = []
             
             for series in series_list:
                 series_path = os.path.join(study_dir, series)
@@ -279,7 +312,7 @@ class DicomUtils:
                     continue
                     
                 try:
-                    series_image, dicom_files, study_desc, _ = DicomUtils.read_dicom_series(series_path)
+                    series_image, dicom_files, study_desc, info_dict, z_idx = DicomUtils.read_dicom_series(series_path)
                     
                     # Extract series name from first DICOM file
                     series_name = None
@@ -293,6 +326,7 @@ class DicomUtils:
                     
                     mri_study.append(series_image)
                     valid_series_list.append(series_name)
+                    z_idx_list.append(z_idx)
                 except Exception as e:
                     logging.warning(f"Failed to load series {series}: {str(e)}. Skipping...")
                     continue
@@ -301,7 +335,7 @@ class DicomUtils:
                 raise RuntimeError(f"No valid series found in {study_dir}")
 
             # Assuming all study descriptions are the same, so returning the final one is ok, no need to return a list.
-            return mri_study, valid_series_list, study_desc
+            return mri_study, valid_series_list, z_idx_list, study_desc
             
         except Exception as e:
             raise RuntimeError(f"Failed to load MRI study: {str(e)}")
