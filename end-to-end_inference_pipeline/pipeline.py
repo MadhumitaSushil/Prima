@@ -459,8 +459,8 @@ class Pipeline:
         except Exception as e:
             self.logger.error(f'Failed to run Prima model: {str(e)}')
             raise
-        finally:
-            self._cleanup()
+        # finally:
+        #     self._cleanup()
 
 
 if __name__=="__main__":
