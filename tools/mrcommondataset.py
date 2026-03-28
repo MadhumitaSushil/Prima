@@ -3,13 +3,18 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from .VolUtils import tokenize_volume, resize_tokens_batch
+from tools.VolUtils import tokenize_volume, resize_tokens_batch
 import scipy.ndimage as ndi
 try:
     import SimpleITK as sitk
 except ImportError:
     sitk = None
 
+def mr_voxel_collate(batch):
+    from torch.utils.data._utils.collate import default_collate
+    tokens_batch = [item[0] for item in batch]
+    metadata_batch = [item[1] for item in batch]
+    return default_collate(tokens_batch), metadata_batch
 
 class MrVoxelDataset(Dataset):
 
@@ -130,13 +135,15 @@ if __name__ == "__main__":
         torch.randn(256, 256, 120),
         torch.randn(256, 256, 40)
     ]
+
+    z_idx = [2]
     
     # Initialize dataset
-    dataset = MrVoxelDataset(sample_volumes)
+    dataset = MrVoxelDataset(sample_volumes, z_idx)
     print(f"Dataset size: {len(dataset)}")
     
     # Create dataloader
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=mr_voxel_collate)
     
     # Test a few iterations
     print("\nTesting DataLoader outputs:")

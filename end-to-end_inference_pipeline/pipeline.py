@@ -41,11 +41,13 @@ import gc
 import psutil
 import time
 
+import torch.multiprocessing as mp
+
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from tools.DicomUtils import DicomUtils
 from tools.models import ModelLoader
-from tools.mrcommondataset import MrVoxelDataset
+from tools.mrcommondataset import MrVoxelDataset, mr_voxel_collate
 from tools.utilities import chartovec, convert_serienames_to_tensor, filtercoords
 from Prima_training_and_evaluation.patchify import MedicalImagePatchifier
 
@@ -122,7 +124,7 @@ class Pipeline:
     def load_mri_study(self, study_dir) -> Tuple[List[sitk.Image], List[str]]:
         """
         Load the MRI study from the study directory.
-        
+
         Returns:
             Tuple containing list of MRI images and series names
         """
@@ -201,6 +203,7 @@ class Pipeline:
                 batch_size=self.config.batch_size,
                 shuffle=False,
                 num_workers=num_workers,
+                collate_fn=mr_voxel_collate,
             )
             return dataloader
         except Exception as e:
@@ -327,6 +330,7 @@ class Pipeline:
                             raise Exception("No tokens found for "+series_name)
                         token_list = []
                         tokens = batch[0]
+                        ser_emb_meta = ser_emb_meta[0]
                         num_tokens = tokens.shape[0]
                         if num_tokens > 5000:
                             raise Exception("Too many tokens: " + str(num_tokens) + " for "+series_name)
@@ -480,6 +484,8 @@ if __name__=="__main__":
                 config = yaml.safe_load(f)
             else:
                 config = json.load(f)
+
+        mp.set_sharing_strategy('file_system')
 
         # Initialize pipeline
         pipeline = Pipeline(config)
